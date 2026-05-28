@@ -9,8 +9,23 @@ import sys
 import os
 import json
 
-sys.path.insert(0, os.path.dirname(__file__))
-from summarizer import summarize, sent_tokenize, T5_MODELS
+# ── Robust path fix: works locally AND on Streamlit Cloud ──────────────────
+_here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else os.getcwd()
+if _here not in sys.path:
+    sys.path.insert(0, _here)
+
+# ── Graceful import with user-facing error instead of blank screen ──────────
+try:
+    from summarizer import summarize, sent_tokenize, T5_MODELS
+    _IMPORT_OK = True
+    _IMPORT_ERR = ""
+except Exception as _e:
+    _IMPORT_OK = False
+    _IMPORT_ERR = str(_e)
+    # Stubs so the rest of the file doesn't crash at definition time
+    T5_MODELS = {"t5-small": {"label": "T5-Small"}}
+    def summarize(*a, **kw): return {"error": "Import failed", "summary": ""}
+    def sent_tokenize(t): return t.split(".")
 
 # ─── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -209,6 +224,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# ─── Import-error banner ────────────────────────────────────────────────────
+if not _IMPORT_OK:
+    st.error(
+        f"**Erreur d'import — le module summarizer.py n'a pas pu être chargé.**\n\n"
+        f"`{_IMPORT_ERR}`\n\n"
+        "Vérifiez que `summarizer.py` est dans le même dossier que `app.py` "
+        "et que toutes les dépendances de `requirements.txt` sont installées."
+    )
+    st.stop()
 
 # ─── Session state ───────────────────────────────────────────────────────────
 if "history" not in st.session_state:
