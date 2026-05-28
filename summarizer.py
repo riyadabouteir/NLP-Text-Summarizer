@@ -350,14 +350,23 @@ _model_cache: dict[str, tuple] = {}   # model_name -> (model, tokenizer)
 def load_t5_model(model_name: str = "t5-small"):
     """
     Lazy-load T5ForConditionalGeneration + AutoTokenizer.
-    Avoids the 'text2text-generation' pipeline task that was removed
-    from newer versions of transformers (≥ 4.52).
+    Forces attn_implementation="eager" to avoid the masking_utils bug
+    introduced in transformers >= 4.51 on Python 3.14 (Streamlit Cloud).
     Returns (model, tokenizer).
     """
     if model_name not in _model_cache:
         from transformers import T5ForConditionalGeneration, AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model     = T5ForConditionalGeneration.from_pretrained(model_name)
+        # attn_implementation="eager" bypasses the new SDPA/masking_utils path
+        # that crashes with "Tensor.item() cannot be called on meta tensors"
+        try:
+            model = T5ForConditionalGeneration.from_pretrained(
+                model_name,
+                attn_implementation="eager",
+            )
+        except TypeError:
+            # Older transformers that don't support attn_implementation kwarg
+            model = T5ForConditionalGeneration.from_pretrained(model_name)
         model.eval()
         _model_cache[model_name] = (model, tokenizer)
     return _model_cache[model_name]
@@ -368,11 +377,19 @@ def _t5_generate(model, tokenizer, prompt: str, max_length: int, min_length: int
                  no_repeat_ngram_size: int) -> str:
     """Run T5 generation; returns decoded string."""
     import torch
-    inputs = tokenizer(prompt, return_tensors="pt",
-                       max_length=512, truncation=True, padding=False)
+    # padding=True + attention_mask avoids the meta-tensor mask bug
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        max_length=512,
+        truncation=True,
+        padding=True,
+        return_attention_mask=True,
+    )
     with torch.no_grad():
         output_ids = model.generate(
-            **inputs,
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
             max_length=max_length,
             min_length=min_length,
             num_beams=num_beams,
